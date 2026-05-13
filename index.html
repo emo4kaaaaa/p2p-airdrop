@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>drop</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2216%22%20fill%3D%22%23fbbf24%22%2F%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%230a0a0a%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%2210%2C14%2016%2C8%2022%2C14%22%2F%3E%3Cpolyline%20points%3D%2210%2C18%2016%2C24%2022%2C18%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -61,6 +62,8 @@ body{
 .file-item .dl-btn:hover{border-color:#34d399;background:#0a1f15}
 .section-label{font-size:12px;font-weight:600;color:#555;text-transform:uppercase;
   letter-spacing:1px;align-self:flex-start;margin-top:4px}
+.logo{margin-bottom:4px}
+.logo svg{display:block}
 .hidden{display:none!important}
 </style>
 </head>
@@ -68,6 +71,15 @@ body{
 
 <div id="app">
   <div id="qr-section">
+    <div class="logo">
+      <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="20" cy="20" r="20" fill="#fbbf24"/>
+        <g fill="none" stroke="#0a0a0a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="12,16 20,8 28,16"/>
+          <polyline points="12,24 20,32 28,24"/>
+        </g>
+      </svg>
+    </div>
     <div id="qrcode"></div>
     <div class="room-info">
       <code id="room-id">---</code>
