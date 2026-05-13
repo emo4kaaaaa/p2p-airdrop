@@ -6,6 +6,7 @@ import random
 import string
 
 from websockets.asyncio.server import serve
+from urllib.parse import urlparse
 from websockets.http11 import Response
 from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
@@ -78,7 +79,7 @@ async def signaling(websocket):
                 break
 
 async def process_request(connection, request):
-    path = request.path
+    path = urlparse(request.path).path
     if path == '/ws':
         return None
 
