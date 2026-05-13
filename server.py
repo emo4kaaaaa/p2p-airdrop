@@ -11,7 +11,7 @@ from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
 
 PORT = int(os.environ.get('PORT', 3000))
-PUBLIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public')
+PUBLIC_DIR = os.path.dirname(os.path.abspath(__file__))
 
 rooms = {}
 
