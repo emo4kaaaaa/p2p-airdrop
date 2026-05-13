@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>drop</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;
+  background:#0a0a0a;color:#f0f0f0;display:flex;align-items:center;justify-content:center;
+  min-height:100vh;-webkit-font-smoothing:antialiased
+}
+#app{width:100%;max-width:480px;padding:24px}
+#qr-section,#file-section{display:flex;flex-direction:column;align-items:center;gap:20px;
+  transition:opacity .4s ease,transform .4s ease}
+#qr-section.fade-out{opacity:0;transform:scale(.95);pointer-events:none}
+#file-section.hidden{display:none}
+#qrcode{padding:16px;background:#111;border-radius:16px;border:1px solid #222}
+#qrcode canvas,#qrcode img{display:block;border-radius:8px}
+.room-info{display:flex;align-items:center;gap:10px;background:#111;border:1px solid #222;
+  border-radius:10px;padding:8px 16px;font-size:14px}
+.room-info code{font-size:18px;font-weight:600;letter-spacing:2px;color:#fff}
+.room-info button{background:0;border:1px solid #333;color:#888;border-radius:6px;
+  padding:4px 10px;cursor:pointer;font-size:12px;transition:.2s}
+.room-info button:hover{border-color:#555;color:#fff}
+.status{display:flex;align-items:center;gap:8px;font-size:14px;color:#888}
+.dot{width:8px;height:8px;border-radius:50%;background:#555;transition:.3s}
+.dot.active{background:#34d399;box-shadow:0 0 8px rgba(52,211,149,.4)}
+.dot.error{background:#f87171}
+.dot.connecting{background:#fbbf24;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.hint{font-size:13px;color:#555;margin-top:-8px}
+.btn{background:#1a1a1a;border:1px solid #333;color:#f0f0f0;border-radius:10px;
+  padding:10px 24px;cursor:pointer;font-size:14px;transition:.2s}
+.btn:hover{background:#222;border-color:#555}
+#drop-zone{
+  width:100%;border:2px dashed #333;border-radius:16px;padding:48px 24px;
+  text-align:center;cursor:pointer;transition:.3s;background:#111;color:#555
+}
+#drop-zone.drag-over{border-color:#2563eb;background:#1a2332;color:#3b82f6}
+#drop-zone span{font-size:15px}
+#drop-zone small{display:block;margin-top:8px;font-size:12px;color:#444}
+.file-list{width:100%;display:flex;flex-direction:column;gap:8px}
+.file-item{
+  display:flex;align-items:center;gap:12px;background:#111;border:1px solid #222;
+  border-radius:10px;padding:12px 16px;transition:.2s
+}
+.file-item .info{flex:1;min-width:0}
+.file-item .name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-item .size{font-size:11px;color:#666;margin-top:2px}
+.file-item .status{font-size:11px;color:#888;flex-shrink:0}
+.progress-bar{width:100%;height:4px;background:#222;border-radius:2px;margin-top:8px;overflow:hidden}
+.progress-bar .fill{height:100%;background:#2563eb;border-radius:2px;transition:width .3s;width:0}
+.file-item.done .fill{background:#34d399}
+.file-item.error .fill{background:#f87171}
+.file-item .dl-btn{background:0;border:1px solid #333;color:#34d399;border-radius:6px;
+  padding:4px 10px;cursor:pointer;font-size:11px;transition:.2s;flex-shrink:0}
+.file-item .dl-btn:hover{border-color:#34d399;background:#0a1f15}
+.section-label{font-size:12px;font-weight:600;color:#555;text-transform:uppercase;
+  letter-spacing:1px;align-self:flex-start;margin-top:4px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="qr-section">
+    <div id="qrcode"></div>
+    <div class="room-info">
+      <code id="room-id">---</code>
+      <button id="copy-btn" onclick="copyRoom()">copy</button>
+    </div>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="status-text">Initializing...</span>
+    </div>
+    <div class="hint">Scan with another device to connect</div>
+  </div>
+
+  <div id="file-section" class="hidden">
+    <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+      <span>Drop files here or click to select</span>
+      <small>Multiple files supported</small>
+    </div>
+    <input type="file" id="file-input" multiple hidden>
+    <div class="section-label">Received</div>
+    <div class="file-list" id="received-list"></div>
+    <div class="section-label" style="margin-top:12px">Sending</div>
+    <div class="file-list" id="sending-list"></div>
+  </div>
+</div>
+
+<script>
+const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const CHUNK_SIZE = 16384;
+
+let state = {
+  roomId: null, isHost: true, pc: null, channel: null,
+  pendingCandidates: [], fileIdGen: 0, incoming: {},
+  connected: false, sending: {}
+};
+
+const $ = id => document.getElementById(id);
+const qrSection = $('qr-section');
+const fileSection = $('file-section');
+const qrContainer = $('qrcode');
+const roomIdEl = $('room-id');
+const dot = $('dot');
+const statusText = $('status-text');
+const dropZone = $('drop-zone');
+const fileInput = $('file-input');
+const receivedList = $('received-list');
+const sendingList = $('sending-list');
+
+function setStatus(text, cls) {
+  statusText.textContent = text;
+  dot.className = 'dot' + (cls ? ' ' + cls : '');
+}
+
+// --- WebSocket signaling ---
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = wsProto + '//' + location.host + '/ws';
+const ws = new WebSocket(wsUrl);
+
+function sendMsg(obj) {
+  ws.send(JSON.stringify(obj));
+}
+
+const params = new URLSearchParams(location.search);
+const joinRoomId = params.get('room');
+
+ws.onopen = () => {
+  if (joinRoomId) {
+    state.isHost = false;
+    setStatus('Connecting...', 'connecting');
+    sendMsg({ type: 'join-room', id: joinRoomId });
+  } else {
+    sendMsg({ type: 'create-room' });
+  }
+};
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+  switch (msg.type) {
+    case 'room-created':
+      state.roomId = msg.id;
+      roomIdEl.textContent = msg.id;
+      setStatus('Waiting for device...', 'connecting');
+      showQR(msg.id);
+      break;
+    case 'room-joined':
+      state.roomId = msg.id;
+      setStatus('Connected! Establishing P2P...', 'connecting');
+      break;
+    case 'peer-joined':
+      setStatus('Peer joined! Connecting...', 'connecting');
+      startConnection(true);
+      break;
+    case 'signal':
+      handleSignal(msg);
+      break;
+    case 'peer-left':
+      setStatus('Peer disconnected', 'error');
+      state.connected = false;
+      resetConnection();
+      break;
+    case 'room-error':
+      setStatus(msg.msg, 'error');
+      break;
+  }
+};
+
+ws.onclose = () => {
+  if (!state.connected) setStatus('Disconnected from server', 'error');
+};
+
+function handleSignal(msg) {
+  const d = msg.data;
+  switch (msg.signalType) {
+    case 'offer':
+      (async () => {
+        if (!state.pc) await startConnection(false);
+        try {
+          await state.pc.setRemoteDescription(new RTCSessionDescription(d.sdp));
+          for (const c of state.pendingCandidates) await state.pc.addIceCandidate(new RTCIceCandidate(c));
+          state.pendingCandidates = [];
+          const a = await state.pc.createAnswer();
+          await state.pc.setLocalDescription(a);
+          sendMsg({ type: 'signal', room: state.roomId, signalType: 'answer', data: { sdp: state.pc.localDescription } });
+        } catch(e) { console.error('offer err:', e); }
+      })();
+      break;
+    case 'answer':
+      (async () => {
+        try { await state.pc.setRemoteDescription(new RTCSessionDescription(d.sdp)); }
+        catch(e) { console.error('answer err:', e); }
+      })();
+      break;
+    case 'candidate':
+      (async () => {
+        try {
+          const c = new RTCIceCandidate(d.candidate);
+          if (state.pc && state.pc.remoteDescription) await state.pc.addIceCandidate(c);
+          else state.pendingCandidates.push(c);
+        } catch(e) { console.error('candidate err:', e); }
+      })();
+      break;
+  }
+}
+
+// --- WebRTC ---
+async function startConnection(initiator) {
+  if (state.pc) return;
+  state.pc = new RTCPeerConnection(RTC_CONFIG);
+  state.pc.onicecandidate = (e) => {
+    if (e.candidate) sendMsg({ type: 'signal', room: state.roomId, signalType: 'candidate', data: { candidate: e.candidate } });
+  };
+  state.pc.oniceconnectionstatechange = () => {
+    if (state.pc.iceConnectionState === 'disconnected' || state.pc.iceConnectionState === 'failed') {
+      setStatus('Connection lost', 'error'); state.connected = false;
+    }
+  };
+  if (initiator) {
+    state.channel = state.pc.createDataChannel('transfer');
+    setupChannel();
+    const offer = await state.pc.createOffer();
+    await state.pc.setLocalDescription(offer);
+    sendMsg({ type: 'signal', room: state.roomId, signalType: 'offer', data: { sdp: offer } });
+  } else {
+    state.pc.ondatachannel = (e) => { state.channel = e.channel; setupChannel(); };
+  }
+}
+
+function setupChannel() {
+  const ch = state.channel;
+  ch.binaryType = 'arraybuffer';
+  ch.onopen = () => {
+    state.connected = true;
+    setStatus('Connected', 'active');
+    qrSection.classList.add('fade-out');
+    fileSection.classList.remove('hidden');
+  };
+  ch.onclose = () => { if (state.connected) { setStatus('Connection closed', 'error'); state.connected = false; } };
+  ch.onmessage = (e) => handleMessage(e.data);
+}
+
+function resetConnection() {
+  try { if (state.channel) state.channel.close(); } catch(e) {}
+  try { if (state.pc) state.pc.close(); } catch(e) {}
+  state.channel = null; state.pc = null;
+  state.pendingCandidates = []; state.incoming = {}; state.sending = {}; state.connected = false;
+  receivedList.innerHTML = ''; sendingList.innerHTML = '';
+  qrSection.classList.remove('fade-out'); fileSection.classList.add('hidden');
+}
+
+// --- QR ---
+function showQR(roomId) {
+  qrContainer.innerHTML = '';
+  new QRCode(qrContainer, {
+    text: location.origin + '?room=' + roomId, width: 260, height: 260,
+    colorDark: '#ffffff', colorLight: '#111111', correctLevel: QRCode.CorrectLevel.H
+  });
+}
+
+function copyRoom() {
+  navigator.clipboard.writeText(state.roomId).then(() => {
+    const btn = $('copy-btn'); btn.textContent = 'copied!';
+    setTimeout(() => btn.textContent = 'copy', 1500);
+  });
+}
+
+// --- File transfer ---
+function handleMessage(data) {
+  if (typeof data === 'string') {
+    const msg = JSON.parse(data);
+    if (msg.t === 0) {
+      state.incoming[msg.id] = { name: msg.name, size: msg.size, chunks: msg.c, received: [], totalReceived: 0 };
+      addReceivedItem(msg.id, msg.name, msg.size);
+    }
+  } else {
+    const v = new DataView(data);
+    const id = v.getUint32(0, true), idx = v.getUint32(4, true), total = v.getUint32(8, true);
+    const chunk = data.slice(12);
+    const f = state.incoming[id];
+    if (!f) return;
+    f.received[idx] = chunk;
+    f.totalReceived += chunk.byteLength;
+    updateReceivedProgress(id, f.totalReceived, f.size);
+    if (f.totalReceived >= f.size) finishReceivedFile(id, f);
+  }
+}
+
+function sendFiles(files) {
+  for (const file of files) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const buf = e.target.result;
+      const id = state.fileIdGen++;
+      const chunks = Math.ceil(buf.byteLength / CHUNK_SIZE);
+      addSendingItem(id, file.name, buf.byteLength);
+      state.sending[id] = { total: buf.byteLength, sent: 0 };
+      state.channel.send(JSON.stringify({ t: 0, id, name: file.name, size: buf.byteLength, c: chunks }));
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE, end = Math.min(start + CHUNK_SIZE, buf.byteLength);
+        const chunk = buf.slice(start, end);
+        const h = new ArrayBuffer(12);
+        const hv = new DataView(h);
+        hv.setUint32(0, id, true); hv.setUint32(4, i, true); hv.setUint32(8, chunks, true);
+        const msg = new Uint8Array(12 + chunk.byteLength);
+        msg.set(new Uint8Array(h), 0); msg.set(new Uint8Array(chunk), 12);
+        state.channel.send(msg.buffer);
+        state.sending[id].sent += chunk.byteLength;
+        updateSendingProgress(id, state.sending[id].sent, state.sending[id].total);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function addSendingItem(id, name, size) {
+  const div = document.createElement('div');
+  div.className = 'file-item'; div.id = 's-' + id;
+  div.innerHTML = '<div class="info"><div class="name">' + esc(name) + '</div><div class="size">' + formatSize(size) + '</div><div class="progress-bar"><div class="fill" id="sp-' + id + '"></div></div></div><div class="status" id="ss-' + id + '">sending...</div>';
+  sendingList.appendChild(div);
+}
+
+function updateSendingProgress(id, sent, total) {
+  const fill = $('sp-' + id);
+  if (fill) fill.style.width = Math.min(100, (sent / total) * 100) + '%';
+  if (sent >= total) {
+    const s = $('ss-' + id);
+    if (s) { s.textContent = 'done'; s.style.color = '#34d399'; }
+    const item = document.getElementById('s-' + id);
+    if (item) item.classList.add('done');
+  }
+}
+
+function addReceivedItem(id, name, size) {
+  const div = document.createElement('div');
+  div.className = 'file-item'; div.id = 'r-' + id;
+  div.innerHTML = '<div class="info"><div class="name">' + esc(name) + '</div><div class="size">' + formatSize(size) + '</div><div class="progress-bar"><div class="fill" id="rp-' + id + '"></div></div></div><div class="status" id="rs-' + id + '">receiving...</div>';
+  receivedList.appendChild(div);
+}
+
+function updateReceivedProgress(id, received, total) {
+  const fill = $('rp-' + id);
+  if (fill) fill.style.width = Math.min(100, (received / total) * 100) + '%';
+}
+
+function finishReceivedFile(id, file) {
+  const blob = new Blob(Array.from({ length: file.received.length }, (_, i) => file.received[i]));
+  const url = URL.createObjectURL(blob);
+  const item = document.getElementById('r-' + id);
+  if (item) {
+    item.classList.add('done');
+    const s = $('rs-' + id);
+    if (s) s.innerHTML = '<button class="dl-btn" onclick="downloadFile(\'' + url + '\',\'' + esc(file.name) + '\')">download</button>';
+  }
+  delete state.incoming[id];
+}
+
+function downloadFile(url, name) {
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+}
+
+function esc(str) {
+  const d = document.createElement('div'); d.textContent = str; return d.innerHTML;
+}
+
+// --- Drag & Drop ---
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('drag-over'); });
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) sendFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) { sendFiles(fileInput.files); fileInput.value = ''; }
+});
+
+setStatus('Initializing...', '');
+</script>
+</body>
+</html>
